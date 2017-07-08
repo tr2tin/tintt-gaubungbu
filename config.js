@@ -6,7 +6,7 @@
 
 var path = require('path'),
     config;
-var port = process.env.PORT || '80';
+var port = process.env.PORT || '2368';
 config = {
     // ### Production
     // When running Ghost in the wild, use the production environment.

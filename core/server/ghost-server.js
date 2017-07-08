@@ -172,13 +172,15 @@ GhostServer.prototype.logStartMessages = function () {
     // Startup & Shutdown messages
     if (process.env.NODE_ENV === 'production') {
         console.log(
-            chalk.green(i18n.t('notices.httpServer.ghostIsRunningIn', {env: process.env.NODE_ENV})),
+            chalk.green(i18n.t('notices.httpServer.ghostIsRunningIn', { env: process.env.PORT })),
+            chalk.green(i18n.t('notices.httpServer.ghostIsRunningIn', { env: process.env.NODE_ENV })),
             i18n.t('notices.httpServer.yourBlogIsAvailableOn', {url: config.url}),
             chalk.gray(i18n.t('notices.httpServer.ctrlCToShutDown'))
         );
     } else {
         console.log(
-            chalk.green(i18n.t('notices.httpServer.ghostIsRunningIn', {env: process.env.NODE_ENV})),
+            chalk.green(i18n.t('notices.httpServer.ghostIsRunningIn', { env: process.env.PORT })),
+            chalk.green(i18n.t('notices.httpServer.ghostIsRunningIn', { env: process.env.NODE_ENV })),
             i18n.t('notices.httpServer.listeningOn'),
             config.getSocket() || config.server.host + ':' + config.server.port,
             i18n.t('notices.httpServer.urlConfiguredAs', {url: config.url}),
