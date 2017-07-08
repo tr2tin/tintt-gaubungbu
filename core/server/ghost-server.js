@@ -172,6 +172,7 @@ GhostServer.prototype.logStartMessages = function () {
     // Startup & Shutdown messages
     if (process.env.NODE_ENV === 'production') {
         console.log(
+            chalk.green(i18n.t('notices.httpServer.ghostIsRunningIn', { env: config.server.host })),
             chalk.green(i18n.t('notices.httpServer.ghostIsRunningIn', { env: process.env.PORT })),
             chalk.green(i18n.t('notices.httpServer.ghostIsRunningIn', { env: process.env.NODE_ENV })),
             i18n.t('notices.httpServer.yourBlogIsAvailableOn', {url: config.url}),

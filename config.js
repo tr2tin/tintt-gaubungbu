@@ -24,7 +24,7 @@ config = {
 
         server: {
             host: '127.0.0.1',
-            port: port
+            port: process.env.PORT
         }
     },
 
