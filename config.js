@@ -6,7 +6,7 @@
 
 var path = require('path'),
     config;
-
+var port = process.env.PORT || '2368';
 config = {
     // ### Production
     // When running Ghost in the wild, use the production environment.
@@ -24,7 +24,7 @@ config = {
 
         server: {
             host: '127.0.0.1',
-            port: process.env.PORT || '2368'
+            port: port
         }
     },
 
@@ -69,7 +69,7 @@ config = {
             // Host to be passed to node's `net.Server#listen()`
             host: '127.0.0.1',
             // Port to be passed to node's `net.Server#listen()`, for iisnode set this to `process.env.PORT`
-            port: process.env.PORT || '2368'
+            port: port
         },
         // #### Paths
         // Specify where your content directory lives
