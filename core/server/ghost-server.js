@@ -54,8 +54,8 @@ GhostServer.prototype.start = function (externalApp) {
             fs.chmod(socketConfig.path, socketConfig.permissions);
         } else {
             self.httpServer = rootApp.listen(
-                config.server.port,
-                config.server.host
+                config.server.port
+                //,config.server.host
             );
         }
 
