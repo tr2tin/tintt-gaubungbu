@@ -1,9 +1,6 @@
-// # Bootup
-// This file needs serious love & refactoring
-
 /**
  * make sure overrides get's called first!
- * - keeping the overrides require here works for installing Ghost as npm!
+ * - keeping the overrides import here works for installing Ghost as npm!
  *
  * the call order is the following:
  * - root index requires core module
@@ -12,193 +9,170 @@
  */
 require('./overrides');
 
-// Module dependencies
-var express = require('express'),
-    _ = require('lodash'),
-    uuid = require('uuid'),
-    Promise = require('bluebird'),
-    i18n = require('./i18n'),
-    api = require('./api'),
-    config = require('./config'),
-    errors = require('./errors'),
-    middleware = require('./middleware'),
-    migrations = require('./data/migration'),
-    versioning = require('./data/schema/versioning'),
-    models = require('./models'),
-    permissions = require('./permissions'),
-    apps = require('./apps'),
-    xmlrpc = require('./data/xml/xmlrpc'),
-    slack = require('./data/slack'),
-    GhostServer = require('./ghost-server'),
-    scheduling = require('./scheduling'),
-    dbHash;
+const debug = require('ghost-ignition').debug('boot:init');
+const Promise = require('bluebird');
+const config = require('./config');
+const common = require('./lib/common');
+const migrator = require('./data/db/migrator');
+const urlService = require('./services/url');
+let parentApp;
 
-function initDbHashAndFirstRun() {
-    return api.settings.read({key: 'dbHash', context: {internal: true}}).then(function (response) {
-        var hash = response.settings[0].value,
-            initHash;
+function initialiseServices() {
+    // CASE: When Ghost is ready with bootstrapping (db migrations etc.), we can trigger the router creation.
+    //       Reason is that the routers access the routes.yaml, which shouldn't and doesn't have to be validated to
+    //       start Ghost in maintenance mode.
+    const routing = require('./services/routing');
+    routing.bootstrap.start();
 
-        dbHash = hash;
+    const permissions = require('./services/permissions'),
+        auth = require('./services/auth'),
+        apps = require('./services/apps'),
+        xmlrpc = require('./services/xmlrpc'),
+        slack = require('./services/slack'),
+        webhooks = require('./services/webhooks'),
+        scheduling = require('./adapters/scheduling');
 
-        if (dbHash === null) {
-            initHash = uuid.v4();
-            return api.settings.edit({settings: [{key: 'dbHash', value: initHash}]}, {context: {internal: true}})
-                .then(function (response) {
-                    dbHash = response.settings[0].value;
-                    return dbHash;
-                    // Use `then` here to do 'first run' actions
-                });
-        }
+    debug('`initialiseServices` Start...');
 
-        return dbHash;
-    });
-}
-
-// ## Initialise Ghost
-// Sets up the express server instances, runs init on a bunch of stuff, configures views, helpers, routes and more
-// Finally it returns an instance of GhostServer
-function init(options) {
-    options = options || {};
-
-    var ghostServer = null, settingsMigrations, currentDatabaseVersion;
-
-    // ### Initialisation
-    // The server and its dependencies require a populated config
-    // It returns a promise that is resolved when the application
-    // has finished starting up.
-
-    // Initialize Internationalization
-    i18n.init();
-
-    // Load our config.js file from the local file system.
-    return config.load(options.config).then(function () {
-        return config.checkDeprecated();
-    }).then(function () {
-        // Load models, no need to wait
-        models.init();
-
-        /**
-         * fresh install:
-         * - getDatabaseVersion will throw an error and we will create all tables (including populating settings)
-         * - this will run in one single transaction to avoid having problems with non existent settings
-         * - see https://github.com/TryGhost/Ghost/issues/7345
-         */
-        return versioning.getDatabaseVersion()
-            .then(function () {
-                /**
-                 * No fresh install:
-                 * - every time Ghost starts,  we populate the default settings before we run migrations
-                 * - important, because it can happen that a new added default property won't be existent
-                 */
-                return models.Settings.populateDefaults();
-            })
-            .catch(function (err) {
-                if (err instanceof errors.DatabaseNotPopulated) {
-                    return migrations.populate();
-                }
-
-                return Promise.reject(err);
-            });
-    }).then(function () {
-        /**
-         * a little bit of duplicated code, but:
-         * - ensure now we load the current database version and remember
-         */
-        return versioning.getDatabaseVersion()
-            .then(function (_currentDatabaseVersion) {
-                currentDatabaseVersion = _currentDatabaseVersion;
-            });
-    }).then(function () {
-        // ATTENTION:
-        // this piece of code was only invented for https://github.com/TryGhost/Ghost/issues/7351#issuecomment-250414759
-        if (currentDatabaseVersion !== '008') {
-            return;
-        }
-
-        if (config.database.client !== 'sqlite3') {
-            return;
-        }
-
-        return models.Settings.findOne({key: 'migrations'}, options)
-            .then(function fetchedMigrationsSettings(result) {
-                try {
-                    settingsMigrations = JSON.parse(result.attributes.value) || {};
-                } catch (err) {
-                    return;
-                }
-
-                if (settingsMigrations.hasOwnProperty('006/01')) {
-                    return;
-                }
-
-                // force them to re-run 008, because we have fixed the date fixture migration
-                currentDatabaseVersion = '007';
-                return versioning.setDatabaseVersion(null, '007');
-            });
-    }).then(function () {
-        var response = migrations.update.isDatabaseOutOfDate({
-            fromVersion: currentDatabaseVersion,
-            toVersion: versioning.getNewestDatabaseVersion(),
-            forceMigration: process.env.FORCE_MIGRATION
-        }), maintenanceState;
-
-        if (response.migrate === true) {
-            maintenanceState = config.maintenance.enabled || false;
-            config.maintenance.enabled = true;
-
-            migrations.update.execute({
-                fromVersion: currentDatabaseVersion,
-                toVersion: versioning.getNewestDatabaseVersion(),
-                forceMigration: process.env.FORCE_MIGRATION
-            }).then(function () {
-                config.maintenance.enabled = maintenanceState;
-            }).catch(function (err) {
-                if (!err) {
-                    return;
-                }
-
-                errors.logErrorAndExit(err, err.context, err.help);
-            });
-        } else if (response.error) {
-            return Promise.reject(response.error);
-        }
-    }).then(function () {
+    return Promise.join(
         // Initialize the permissions actions and objects
-        // NOTE: Must be done before initDbHashAndFirstRun calls
-        return permissions.init();
-    }).then(function () {
-        // Initialize the settings cache now,
-        // This is an optimisation, so that further reads from settings are fast.
-        // We do also do this after boot
-        return api.init();
-    }).then(function () {
-        return Promise.join(
-            // Check for or initialise a dbHash.
-            initDbHashAndFirstRun(),
-            // Initialize apps
-            apps.init(),
-            // Initialize xmrpc ping
-            xmlrpc.listen(),
-            // Initialize slack ping
-            slack.listen()
-        );
-    }).then(function () {
-        // Get reference to an express app instance.
-        var parentApp = express();
+        permissions.init(),
+        xmlrpc.listen(),
+        slack.listen(),
+        webhooks.listen(),
+        apps.init(),
+        scheduling.init({
+            schedulerUrl: config.get('scheduling').schedulerUrl,
+            active: config.get('scheduling').active,
+            apiUrl: urlService.utils.urlFor('api', true),
+            internalPath: config.get('paths').internalSchedulingPath,
+            contentPath: config.getContentPath('scheduling')
+        })
+    ).then(function () {
+        debug('XMLRPC, Slack, Webhooks, Apps, Scheduling, Permissions done');
 
-        // ## Middleware and Routing
-        middleware(parentApp);
-
-        return new GhostServer(parentApp);
-    }).then(function (_ghostServer) {
-        ghostServer = _ghostServer;
-
-        // scheduling can trigger api requests, that's why we initialize the module after the ghost server creation
-        // scheduling module can create x schedulers with different adapters
-        return scheduling.init(_.extend(config.scheduling, {apiUrl: config.apiUrl()}));
+        // Initialise analytics events
+        if (config.get('segment:key')) {
+            require('./analytics-events').init();
+        }
     }).then(function () {
-        return ghostServer;
+        parentApp.use(auth.init());
+        debug('Auth done');
+
+        debug('...`initialiseServices` End');
     });
 }
 
-module.exports = init;
+/**
+ * - initialise models
+ * - initialise i18n
+ * - load all settings into settings cache (almost every component makes use of this cache)
+ * - load active theme
+ * - create our express apps (site, admin, api)
+ * - start the ghost server
+ * - enable maintenance mode if migrations are missing
+ */
+const minimalRequiredSetupToStartGhost = (dbState) => {
+    const settings = require('./services/settings');
+    const models = require('./models');
+    const themes = require('./services/themes');
+    const GhostServer = require('./ghost-server');
+
+    let ghostServer;
+
+    // Initialize Ghost core internationalization
+    common.i18n.init();
+    debug('Default i18n done for core');
+
+    models.init();
+    debug('Models done');
+
+    return settings.init()
+        .then(() => {
+            debug('Settings done');
+            return themes.init();
+        })
+        .then(() => {
+            debug('Themes done');
+
+            parentApp = require('./web/parent-app')();
+            debug('Express Apps done');
+
+            return new GhostServer(parentApp);
+        })
+        .then((_ghostServer) => {
+            ghostServer = _ghostServer;
+
+            // CASE: all good or db was just initialised
+            if (dbState === 1 || dbState === 2) {
+                common.events.emit('db.ready');
+
+                return initialiseServices()
+                    .then(() => {
+                        return ghostServer;
+                    });
+            }
+
+            // CASE: migrations required, put blog into maintenance mode
+            if (dbState === 4) {
+                common.logging.info('Blog is in maintenance mode.');
+
+                config.set('maintenance:enabled', true);
+
+                migrator.migrate()
+                    .then(() => {
+                        common.events.emit('db.ready');
+                        return initialiseServices();
+                    })
+                    .then(() => {
+                        config.set('maintenance:enabled', false);
+                        common.logging.info('Blog is out of maintenance mode.');
+                        return GhostServer.announceServerStart();
+                    })
+                    .catch((err) => {
+                        return GhostServer.announceServerStopped(err)
+                            .finally(() => {
+                                common.logging.error(err);
+                                setTimeout(() => {
+                                    process.exit(-1);
+                                }, 100);
+                            });
+                    });
+
+                return ghostServer;
+            }
+        });
+};
+
+/**
+ * Connect to database.
+ * Check db state.
+ */
+const isDatabaseInitialisationRequired = () => {
+    const db = require('./data/db/connection');
+    let dbState;
+
+    return migrator.getState()
+        .then((state) => {
+            dbState = state;
+
+            // CASE: db initialisation required, wait till finished
+            if (dbState === 2) {
+                return migrator.dbInit();
+            }
+
+            // CASE: is db incompatible? e.g. you can't connect a 0.11 database with Ghost 1.0 or 2.0
+            if (dbState === 3) {
+                return migrator.isDbCompatible(db)
+                    .then(() => {
+                        dbState = 2;
+                        return migrator.dbInit();
+                    });
+            }
+        })
+        .then(() => {
+            return minimalRequiredSetupToStartGhost(dbState);
+        });
+};
+
+module.exports = isDatabaseInitialisationRequired;

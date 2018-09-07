@@ -1,48 +1,47 @@
 // # Configuration API
 // RESTful API for browsing the configuration
-var _                  = require('lodash'),
-    config             = require('../config'),
-    Promise            = require('bluebird'),
+const Promise = require('bluebird'),
+    {isPlainObject} = require('lodash'),
+    urlService = require('../services/url'),
+    models = require('../models'),
+    config = require('../config'),
+    labs = require('../services/labs'),
+    settingsCache = require('../services/settings/cache'),
+    ghostVersion = require('../lib/ghost-version');
 
-    configuration;
-
-function labsFlag(key) {
-    return {
-        value: (config[key] === true),
-        type: 'bool'
-    };
-}
+let configuration;
 
 function fetchAvailableTimezones() {
-    var timezones = require('../data/timezones.json');
+    const timezones = require('../data/timezones.json');
     return timezones;
 }
 
 function getAboutConfig() {
     return {
-        version: config.ghostVersion,
-        environment: process.env.NODE_ENV,
-        database: config.database.client,
-        mail: _.isObject(config.mail) ? config.mail.transport : ''
+        version: ghostVersion.full,
+        environment: config.get('env'),
+        database: config.get('database').client,
+        mail: isPlainObject(config.get('mail')) ? config.get('mail').transport : ''
     };
 }
 
 function getBaseConfig() {
     return {
-        fileStorage:    {value: (config.fileStorage !== false), type: 'bool'},
-        useGravatar:    {value: !config.isPrivacyDisabled('useGravatar'), type: 'bool'},
-        publicAPI:      labsFlag('publicAPI'),
-        internalTags:   labsFlag('internalTags'),
-        blogUrl:        {value: config.url.replace(/\/$/, ''), type: 'string'},
-        blogTitle:      {value: config.theme.title, type: 'string'},
-        routeKeywords:  {value: JSON.stringify(config.routeKeywords), type: 'json'}
+        useGravatar: !config.isPrivacyDisabled('useGravatar'),
+        publicAPI: labs.isSet('publicAPI'),
+        blogUrl: urlService.utils.urlFor('home', true),
+        blogTitle: settingsCache.get('title'),
+        clientExtensions: config.get('clientExtensions'),
+        enableDeveloperExperiments: config.get('enableDeveloperExperiments')
     };
 }
 
 /**
  * ## Configuration API Methods
  *
- * **See:** [API Methods](index.js.html#api%20methods)
+ * We need to load the client credentials dynamically.
+ *
+ * **See:** [API Methods](constants.js.html#api%20methods)
  */
 configuration = {
 
@@ -56,7 +55,15 @@ configuration = {
         options = options || {};
 
         if (!options.key) {
-            return Promise.resolve({configuration: [getBaseConfig()]});
+            return models.Client.findOne({slug: 'ghost-admin'})
+                .then((ghostAdmin) => {
+                    const configuration = getBaseConfig();
+
+                    configuration.clientId = ghostAdmin.get('slug');
+                    configuration.clientSecret = ghostAdmin.get('secret');
+
+                    return {configuration: [configuration]};
+                });
         }
 
         if (options.key === 'about') {

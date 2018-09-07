@@ -1,16 +1,12 @@
-var labs            = require('../../utils/labs');
+const models = require('../../models');
 
 function getKeywords(data) {
     if (data.post && data.post.tags && data.post.tags.length > 0) {
-        return data.post.tags.reduce(function (tags, tag) {
-            if (tag.visibility !== 'internal' || !labs.isSet('internalTags')) {
-                tags.push(tag.name);
-            }
-            return tags;
-        }, []);
+        return models.Base.Model.filterByVisibility(data.post.tags, ['public'], false, function processItem(item) {
+            return item.name;
+        });
     }
     return null;
 }
 
 module.exports = getKeywords;
-

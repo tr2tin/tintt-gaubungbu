@@ -1,7 +1,7 @@
 var moment = require('moment-timezone'),
     Promise = require('bluebird'),
     _ = require('lodash'),
-    errors = require('../../errors');
+    common = require('../../lib/common');
 
 module.exports = function (Bookshelf) {
     var ParentModel = Bookshelf.Model,
@@ -26,7 +26,7 @@ module.exports = function (Bookshelf) {
         sync: function timestamp(options) {
             var parentSync = ParentModel.prototype.sync.apply(this, arguments),
                 originalUpdateSync = parentSync.update,
-                self = this, err;
+                self = this;
 
             // CASE: only enabled for posts table
             if (this.tableName !== 'posts' ||
@@ -48,16 +48,24 @@ module.exports = function (Bookshelf) {
             parentSync.update = function update() {
                 var changed = _.omit(self.changed, [
                         'created_at', 'updated_at', 'author_id', 'id',
-                        'published_by', 'updated_by', 'html'
+                        'published_by', 'updated_by', 'html', 'plaintext'
                     ]),
                     clientUpdatedAt = moment(self.clientData.updated_at || self.serverData.updated_at || new Date()),
                     serverUpdatedAt = moment(self.serverData.updated_at || clientUpdatedAt);
 
                 if (Object.keys(changed).length) {
                     if (clientUpdatedAt.diff(serverUpdatedAt) !== 0) {
-                        err = new errors.InternalServerError('Saving failed! Someone else is editing this post.');
-                        err.code = 'UPDATE_COLLISION';
-                        return Promise.reject(err);
+                        // @TODO: Remove later. We want to figure out how many people experience the error in which context.
+                        return Promise.reject(new common.errors.UpdateCollisionError({
+                            message: 'Saving failed! Someone else is editing this post.',
+                            code: 'UPDATE_COLLISION',
+                            level: 'critical',
+                            context: JSON.stringify({
+                                clientUpdatedAt: self.clientData.updated_at,
+                                serverUpdatedAt: self.serverData.updated_at,
+                                changed: changed
+                            })
+                        }));
                     }
                 }
 
