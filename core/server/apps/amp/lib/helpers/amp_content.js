@@ -6,43 +6,43 @@
 //
 // Converts normal HTML into AMP HTML with Amperize module and uses a cache to return it from
 // there if available. The cacheId is a combination of `updated_at` and the `slug`.
-var hbs                  = require('express-hbs'),
-    Promise              = require('bluebird'),
-    Amperize             = require('amperize'),
-    moment               = require('moment'),
-    sanitizeHtml         = require('sanitize-html'),
-    config               = require('../../../../config'),
-    errors               = require('../../../../errors'),
-    makeAbsoluteUrl      = require('../../../../utils/make-absolute-urls'),
-    cheerio              = require('cheerio'),
-    amperize             = new Amperize(),
-    amperizeCache        = {},
-    allowedAMPTags       = [],
+const Promise = require('bluebird'),
+    moment = require('moment'),
+    proxy = require('../../../../helpers/proxy'),
+    SafeString = proxy.SafeString,
+    logging = proxy.logging,
+    i18n = proxy.i18n,
+    errors = proxy.errors,
+    urlService = require('../../../../services/url'),
+    amperizeCache = {};
+
+let allowedAMPTags = [],
     allowedAMPAttributes = {},
-    cleanHTML,
-    ampHTML;
+    amperize = null,
+    ampHTML = '',
+    cleanHTML = '';
 
 allowedAMPTags = ['html', 'body', 'article', 'section', 'nav', 'aside', 'h1', 'h2',
-                'h3', 'h4', 'h5', 'h6', 'header', 'footer', 'address', 'p', 'hr',
-                'pre', 'blockquote', 'ol', 'ul', 'li', 'dl', 'dt', 'dd', 'figure',
-                'figcaption', 'div', 'main', 'a', 'em', 'strong', 'small', 's', 'cite',
-                'q', 'dfn', 'abbr', 'data', 'time', 'code', 'var', 'samp', 'kbd', 'sub',
-                'sup', 'i', 'b', 'u', 'mark', 'ruby', 'rb', 'rt', 'rtc', 'rp', 'bdi',
-                'bdo', 'span', 'br', 'wbr', 'ins', 'del', 'source', 'track', 'svg', 'g',
-                'path', 'glyph', 'glyphref', 'marker', 'view', 'circle', 'line', 'polygon',
-                'polyline', 'rect', 'text', 'textpath', 'tref', 'tspan', 'clippath',
-                'filter', 'lineargradient', 'radialgradient', 'mask', 'pattern', 'vkern',
-                'hkern', 'defs', 'stop', 'use', 'foreignobject', 'symbol', 'desc', 'title',
-                'table', 'caption', 'colgroup', 'col', 'tbody', 'thead', 'tfoot', 'tr', 'td',
-                'th', 'button', 'noscript', 'acronym', 'center', 'dir', 'hgroup', 'listing',
-                'multicol', 'nextid', 'nobr', 'spacer', 'strike', 'tt', 'xmp', 'amp-img',
-                'amp-video', 'amp-ad', 'amp-embed', 'amp-anim', 'amp-iframe', 'amp-pixel',
-                'amp-audio', 'O:P'];
+    'h3', 'h4', 'h5', 'h6', 'header', 'footer', 'address', 'p', 'hr',
+    'pre', 'blockquote', 'ol', 'ul', 'li', 'dl', 'dt', 'dd', 'figure',
+    'figcaption', 'div', 'main', 'a', 'em', 'strong', 'small', 's', 'cite',
+    'q', 'dfn', 'abbr', 'data', 'time', 'code', 'var', 'samp', 'kbd', 'sub',
+    'sup', 'i', 'b', 'u', 'mark', 'ruby', 'rb', 'rt', 'rtc', 'rp', 'bdi',
+    'bdo', 'span', 'br', 'wbr', 'ins', 'del', 'source', 'track', 'svg', 'g',
+    'path', 'glyph', 'glyphref', 'marker', 'view', 'circle', 'line', 'polygon',
+    'polyline', 'rect', 'text', 'textpath', 'tref', 'tspan', 'clippath',
+    'filter', 'lineargradient', 'radialgradient', 'mask', 'pattern', 'vkern',
+    'hkern', 'defs', 'stop', 'use', 'foreignobject', 'symbol', 'desc', 'title',
+    'table', 'caption', 'colgroup', 'col', 'tbody', 'thead', 'tfoot', 'tr', 'td',
+    'th', 'button', 'noscript', 'acronym', 'center', 'dir', 'hgroup', 'listing',
+    'multicol', 'nextid', 'nobr', 'spacer', 'strike', 'tt', 'xmp', 'amp-img',
+    'amp-video', 'amp-ad', 'amp-embed', 'amp-anim', 'amp-iframe', 'amp-pixel',
+    'amp-audio', 'O:P'];
 
 allowedAMPAttributes = {
     '*': ['itemid', 'itemprop', 'itemref', 'itemscope', 'itemtype', 'accesskey', 'class', 'dir', 'draggable',
-          'id', 'lang', 'tabindex', 'title', 'translate', 'aria-*', 'role', 'placeholder', 'fallback', 'lightbox',
-          'overflow', 'amp-access', 'amp-access-*', 'i-amp-access-id'],
+        'id', 'lang', 'tabindex', 'title', 'translate', 'aria-*', 'role', 'placeholder', 'fallback', 'lightbox',
+        'overflow', 'amp-access', 'amp-access-*', 'i-amp-access-id', 'data-*'],
     h1: ['align'],
     h2: ['align'],
     h3: ['align'],
@@ -103,14 +103,14 @@ allowedAMPAttributes = {
     'amp-img': ['media', 'noloading', 'alt', 'attribution', 'placeholder', 'src', 'srcset', 'width', 'height', 'layout'],
     'amp-pixel': ['src'],
     'amp-video': ['src', 'srcset', 'media', 'noloading', 'width', 'height', 'layout', 'alt', 'attribution',
-                  'autoplay', 'controls', 'loop', 'muted', 'poster', 'preload'],
+        'autoplay', 'controls', 'loop', 'muted', 'poster', 'preload'],
     'amp-embed': ['media', 'noloading', 'width', 'height', 'layout', 'type', 'data-*', 'json'],
     'amp-ad': ['media', 'noloading', 'width', 'height', 'layout', 'type', 'data-*', 'json'],
     // extended components we support
     'amp-anim': ['media', 'noloading', 'alt', 'attribution', 'placeholder', 'src', 'srcset', 'width', 'height', 'layout'],
     'amp-audio': ['src', 'width', 'height', 'autoplay', 'loop', 'muted', 'controls'],
     'amp-iframe': ['src', 'srcdoc', 'width', 'height', 'layout', 'frameborder', 'allowfullscreen', 'allowtransparency',
-                   'sandbox', 'referrerpolicy']
+        'sandbox', 'referrerpolicy']
 };
 
 function getAmperizeHTML(html, post) {
@@ -118,17 +118,29 @@ function getAmperizeHTML(html, post) {
         return;
     }
 
+    let Amperize = require('amperize'),
+        startedAtMoment = moment();
+
+    amperize = amperize || new Amperize();
+
     // make relative URLs abolute
-    html = makeAbsoluteUrl(html, config.url, post.url).html();
+    html = urlService.utils.makeAbsoluteUrls(html, urlService.utils.urlFor('home', true), post.url).html();
 
     if (!amperizeCache[post.id] || moment(new Date(amperizeCache[post.id].updated_at)).diff(new Date(post.updated_at)) < 0) {
-        return new Promise(function (resolve) {
-            amperize.parse(html, function (err, res) {
+        return new Promise((resolve) => {
+            amperize.parse(html, (err, res) => {
+                logging.info('amp.parse', post.url, moment().diff(startedAtMoment, 'ms') + 'ms');
+
                 if (err) {
                     if (err.src) {
-                        errors.logError(err.message, 'AMP HTML couldn\'t get parsed: ' + err.src);
+                        logging.error(new errors.GhostError({
+                            message: `AMP HTML couldn\'t get parsed: ${err.src}`,
+                            err: err,
+                            context: post.url,
+                            help: i18n.t('errors.apps.appWillNotBeLoaded.help')
+                        }));
                     } else {
-                        errors.logError(err);
+                        logging.error(new errors.GhostError({err}));
                     }
 
                     // save it in cache to prevent multiple calls to Amperize until
@@ -148,12 +160,14 @@ function getAmperizeHTML(html, post) {
 }
 
 function ampContent() {
-    var amperizeHTML = {
+    let sanitizeHtml = require('sanitize-html'),
+        cheerio = require('cheerio'),
+        amperizeHTML = {
             amperize: getAmperizeHTML(this.html, this)
         };
 
-    return Promise.props(amperizeHTML).then(function (result) {
-        var $;
+    return Promise.props(amperizeHTML).then((result) => {
+        let $ = null;
 
         // our Amperized HTML
         ampHTML = result.amperize || '';
@@ -179,10 +193,10 @@ function ampContent() {
         cleanHTML = sanitizeHtml(ampHTML, {
             allowedTags: allowedAMPTags,
             allowedAttributes: allowedAMPAttributes,
-            selfClosing: ['source', 'track']
+            selfClosing: ['source', 'track', 'br']
         });
 
-        return new hbs.handlebars.SafeString(cleanHTML);
+        return new SafeString(cleanHTML);
     });
 }
 

@@ -2,38 +2,23 @@
 // Usage: `{{#foreach data}}{{/foreach}}`
 //
 // Block helper designed for looping through posts
-var hbs             = require('express-hbs'),
-    _               = require('lodash'),
-    errors          = require('../errors'),
-    i18n            = require('../i18n'),
-    labs            = require('../utils/labs'),
-    utils           = require('./utils'),
-
-    hbsUtils        = hbs.handlebars.Utils,
-    foreach;
+var proxy = require('./proxy'),
+    _ = require('lodash'),
+    logging = proxy.logging,
+    i18n = proxy.i18n,
+    models = proxy.models,
+    hbsUtils = proxy.hbs.Utils,
+    createFrame = proxy.hbs.handlebars.createFrame;
 
 function filterItemsByVisibility(items, options) {
-    var visibility = utils.parseVisibility(options);
+    var visibilityArr = models.Base.Model.parseVisibilityString(options.hash.visibility);
 
-    if (!labs.isSet('internalTags') || _.includes(visibility, 'all')) {
-        return items;
-    }
-
-    function visibilityFilter(item) {
-        // If the item doesn't have a visibility property && options.hash.visibility wasn't set
-        // We return the item, else we need to be sure that this item has the property
-        if (!item.visibility && !options.hash.visibility || _.includes(visibility, item.visibility)) {
-            return item;
-        }
-    }
-
-    // We don't want to change the structure of what is returned
-    return _.isArray(items) ? _.filter(items, visibilityFilter) : _.pickBy(items, visibilityFilter);
+    return models.Base.Model.filterByVisibility(items, visibilityArr, !!options.hash.visibility);
 }
 
-foreach = function (items, options) {
+module.exports = function foreach(items, options) {
     if (!options) {
-        errors.logWarn(i18n.t('warnings.helpers.foreach.iteratorNeeded'));
+        logging.warn(i18n.t('warnings.helpers.foreach.iteratorNeeded'));
     }
 
     if (hbsUtils.isFunction(items)) {
@@ -66,7 +51,7 @@ foreach = function (items, options) {
     }
 
     if (options.data) {
-        data = hbs.handlebars.createFrame(options.data);
+        data = createFrame(options.data);
     }
 
     function execIteration(field, index, last) {
@@ -93,8 +78,7 @@ foreach = function (items, options) {
 
     function iterateCollection(context) {
         // Context is all posts on the blog
-        var count = 1,
-            current = 1;
+        var current = 1;
 
         // For each post, if it is a post number that fits within the from and to
         // send the key to execIteration to set to be added to the page
@@ -107,7 +91,6 @@ foreach = function (items, options) {
             if (current <= to) {
                 execIteration(key, current - 1, current === to);
             }
-            count += 1;
             current += 1;
         });
     }
@@ -122,5 +105,3 @@ foreach = function (items, options) {
 
     return output;
 };
-
-module.exports = foreach;

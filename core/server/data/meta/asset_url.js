@@ -1,36 +1,49 @@
-var config = require('../../config'),
-    generateAssetHash = require('../../utils/asset-hash');
+const crypto = require('crypto'),
+    config = require('../../config'),
+    imageLib = require('../../lib/image'),
+    urlService = require('../../services/url'),
+    packageInfo = require('../../../../package.json');
 
-function getAssetUrl(path, isAdmin, minify) {
-    var output = '';
+/**
+ * Serve either uploaded favicon or default
+ * @return {string}
+ */
+function getFaviconUrl() {
+    return imageLib.blogIcon.getIconUrl();
+}
 
-    output += config.paths.subdir + '/';
-
-    if (!path.match(/^favicon\.ico$/) && !path.match(/^shared/) && !path.match(/^asset/)) {
-        if (isAdmin) {
-            output += 'ghost/';
-        } else {
-            output += 'assets/';
-        }
+function getAssetUrl(path, hasMinFile) {
+    // CASE: favicon - this is special path with its own functionality
+    if (path.match(/\/?favicon\.(ico|png)$/)) {
+        // @TODO, resolve this - we should only be resolving subdirectory and extension.
+        return getFaviconUrl();
     }
 
-    // Get rid of any leading slash on the path
-    path = path.replace(/^\//, '');
+    // CASE: Build the output URL
+    // Add subdirectory...
+    var output = urlService.utils.urlJoin(urlService.utils.getSubdir(), '/');
 
-    // replace ".foo" with ".min.foo" in production
-    if (minify) {
+    // Optionally add /assets/
+    if (!path.match(/^public/) && !path.match(/^asset/)) {
+        output = urlService.utils.urlJoin(output, 'assets/');
+    }
+
+    // replace ".foo" with ".min.foo" if configured
+    if (hasMinFile && config.get('useMinFiles') !== false) {
         path = path.replace(/\.([^\.]*)$/, '.min.$1');
     }
 
-    output += path;
+    // Add the path for the requested asset
+    output = urlService.utils.urlJoin(output, path);
 
-    if (!path.match(/^favicon\.ico$/)) {
-        if (!config.assetHash) {
-            config.set({assetHash: generateAssetHash()});
-        }
-
-        output = output + '?v=' + config.assetHash;
+    // Ensure we have an assetHash
+    // @TODO rework this!
+    if (!config.get('assetHash')) {
+        config.set('assetHash', (crypto.createHash('md5').update(packageInfo.version + Date.now()).digest('hex')).substring(0, 10));
     }
+
+    // Finally add the asset hash to the output URL
+    output += '?v=' + config.get('assetHash');
 
     return output;
 }

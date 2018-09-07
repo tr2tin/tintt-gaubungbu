@@ -1,30 +1,43 @@
-var config     = require('../../config'),
-    errors     = require('../../errors'),
-    i18n       = require('../../i18n'),
+const urlService = require('../../services/url'),
+    common = require('../../lib/common'),
     middleware = require('./lib/middleware'),
-    router     = require('./lib/router');
+    router = require('./lib/router'),
+    registerHelpers = require('./lib/helpers'),
+    // routeKeywords.private: 'private'
+    PRIVATE_KEYWORD = 'private';
+
+let checkSubdir = function checkSubdir() {
+    let paths = '';
+
+    if (urlService.utils.getSubdir()) {
+        paths = urlService.utils.getSubdir().split('/');
+
+        if (paths.pop() === PRIVATE_KEYWORD) {
+            common.logging.error(new common.errors.GhostError({
+                message: common.i18n.t('errors.config.urlCannotContainPrivateSubdir.error'),
+                context: common.i18n.t('errors.config.urlCannotContainPrivateSubdir.description'),
+                help: common.i18n.t('errors.config.urlCannotContainPrivateSubdir.help')
+            }));
+
+            // @TODO: why
+            process.exit(0);
+        }
+    }
+};
 
 module.exports = {
-    activate: function activate() {
-        if (config.paths.subdir) {
-            var paths = config.paths.subdir.split('/');
+    activate: function activate(ghost) {
+        let privateRoute = `/${PRIVATE_KEYWORD}/`;
 
-            if (paths.pop() === config.routeKeywords.private) {
-                errors.logErrorAndExit(
-                    new Error(i18n.t('errors.config.urlCannotContainPrivateSubdir.error')),
-                    i18n.t('errors.config.urlCannotContainPrivateSubdir.description'),
-                    i18n.t('errors.config.urlCannotContainPrivateSubdir.help')
-                );
-            }
-        }
+        checkSubdir();
+
+        ghost.routeService.registerRouter(privateRoute, router);
+
+        registerHelpers(ghost);
     },
 
-    setupMiddleware: function setupMiddleware(blogApp) {
-        blogApp.use(middleware.checkIsPrivate);
-        blogApp.use(middleware.filterPrivateRoutes);
-    },
-
-    setupRoutes: function setupRoutes(blogRouter) {
-        blogRouter.use('/' + config.routeKeywords.private + '/', router);
+    setupMiddleware: function setupMiddleware(siteApp) {
+        siteApp.use(middleware.checkIsPrivate);
+        siteApp.use(middleware.filterPrivateRoutes);
     }
 };
