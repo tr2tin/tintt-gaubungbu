@@ -1,0 +1,22 @@
+{
+    "database": {
+        "client": "mysql",
+        "connection": {
+            "host"     : "localhost",
+            "user"     : "root",
+            "password" : "Trong@123",
+            "database" : "tinttblog"
+        }
+    },
+    "paths": {
+        "contentPath": "content/"
+    },
+    "logging": {
+        "level": "info",
+        "rotation": {
+            "enabled": true
+        },
+        "transports": ["file", "stdout"]
+    }
+}
+
